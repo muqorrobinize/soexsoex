@@ -1,0 +1,21 @@
+{
+  "name": "soexsoex",
+  "version": "1.0.0",
+  "description": "Bank soal AI SOE",
+  "main": "index.html",
+  "private": true,
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "ai",
+    "vercel"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@vercel/kv": "^1.0.1",
+    "uuid": "^9.0.1"
+  }
+}
+
