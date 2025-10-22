@@ -1,23 +1,18 @@
 // Ini adalah file Vercel Serverless Function
 // Simpan sebagai: /api/submit-question.js
-
-// PENTING: Kamu perlu menginstal '@vercel/kv' dan 'uuid'
-// Jalankan: npm install @vercel/kv uuid
+// PERUBAHAN BESAR: Menggunakan struktur Hash + Indeks untuk deteksi duplikat & enrichment.
 
 import { createClient } from '@vercel/kv';
 import { v4 as uuidv4 } from 'uuid';
 
 // Inisialisasi Vercel KV
-// Variabel ini otomatis didapat dari Vercel saat kamu menghubungkan KV
 const kv = createClient({
     url: process.env.KV_REST_API_URL,
     token: process.env.KV_REST_API_TOKEN,
 });
 
 // --- Logika Rotasi API Key (Autoswitch) ---
-// Ambil daftar key dari Vercel Environment Variable
 const GEMINI_API_KEY_POOL = process.env.GEMINI_API_KEY_POOL || '';
-// Pisahkan string menjadi array, buang spasi, dan filter jika ada yang kosong
 const apiKeys = GEMINI_API_KEY_POOL.split(',')
     .map(k => k.trim())
     .filter(k => k.length > 0);
@@ -26,19 +21,16 @@ if (apiKeys.length === 0) {
     console.error('CRITICAL: GEMINI_API_KEY_POOL environment variable tidak di-set atau kosong.');
 }
 
-// Fungsi untuk mengambil satu API key secara acak dari pool
 function getNextApiKey() {
     if (apiKeys.length === 0) {
         throw new Error('Tidak ada API keys yang tersedia di pool.');
     }
-    // Pilih indeks acak
     const randomIndex = Math.floor(Math.random() * apiKeys.length);
     return apiKeys[randomIndex];
 }
 
 // Helper untuk memanggil Gemini API
 async function callGemini(promptText) {
-    // 1. Dapatkan API key acak untuk request ini
     const selectedApiKey = getNextApiKey();
     const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${selectedApiKey}`;
     
@@ -73,7 +65,6 @@ async function callGemini(promptText) {
         }
 
     } catch (error) {
-        // Log error dengan 4 digit terakhir key untuk debugging
         console.error(`Error calling Gemini with key ending in ...${selectedApiKey.slice(-4)}:`, error);
         throw error;
     }
@@ -114,12 +105,12 @@ export default async function handler(req, res) {
             return res.status(500).json({ error: 'AI Validator gagal merespons. Coba lagi.', validation: 'INVALID' });
         }
 
-        // Jika tidak valid, stop di sini
         if (validationResult.validation !== 'VALID') {
             return res.status(400).json(validationResult);
         }
 
         // --- 2. AI Refinement (Perbaikan Teks) ---
+        // Kita butuh hasil refine SEKARANG untuk mengecek duplikat
         const refinePrompt = `
             Anda adalah editor teks untuk bank soal.
             Perbaiki pengetikan, ejaan, dan tata bahasa (PUEBI) dari soal dan jawaban berikut.
@@ -140,40 +131,83 @@ export default async function handler(req, res) {
             console.error('AI refinement parse error:', err);
             refinedResult = { soal_refined: soal, jawaban_refined: jawaban };
         }
-
-        // --- 3. Simpan ke Vercel KV ---
-        const timestamp = new Date().toISOString();
-        const questionId = uuidv4();
         
-        const questionData = {
-            id: questionId,
+        const timestamp = new Date().toISOString();
+        const submissionData = {
             timestamp: timestamp,
-            ruang: ruang,
-            soal_asli: soal,
-            soal: refinedResult.soal_refined,
-            jawaban_asli: jawaban,
-            jawaban: refinedResult.jawaban_refined,
+            soalAsli: soal,
+            jawabanAsli: jawaban,
+            jawabanRefined: refinedResult.jawaban_refined,
         };
 
-        // Simpan soal ke dalam 'List' bernama 'DaftarSoal'
-        // lpush = tambahkan ke awal list (agar data terbaru selalu di atas)
-        await kv.lpush('DaftarSoal', JSON.stringify(questionData));
+        // --- 3. Deteksi Duplikat ---
+        // Buat 'kunci' unik untuk soal. Normalisasi (lowercase, trim) penting.
+        const soalIndexKey = refinedResult.soal_refined.toLowerCase().trim();
+        
+        // Cek ke 'indeks' apakah soal ini sudah ada
+        // 'soexsoex:index:soal' adalah HASH { "teks soal": "question-id-uuid" }
+        const existingQuestionId = await kv.hget('soexsoex:index:soal', soalIndexKey);
 
+        if (existingQuestionId) {
+            // --- 4a. JIKA DUPLIKAT: Enrich (Perkaya) Data ---
+            
+            // Ambil data lama
+            const existingDataString = await kv.hget('soexsoex:questions', existingQuestionId);
+            if (!existingDataString) {
+                // Harusnya tidak terjadi, tapi untuk jaga-jaga (jika indeks ada tapi data tidak)
+                // Kita anggap saja seperti soal baru
+                await kv.hdel('soexsoex:index:soal', soalIndexKey);
+                return createNewQuestion(res, ruang, refinedResult.soal_refined, soalIndexKey, submissionData, currentSubmissions);
+            }
+            
+            const existingData = JSON.parse(existingDataString);
+            
+            // Tambahkan submission baru ini ke log
+            existingData.submissions.push(submissionData);
+            
+            // --- INI PERMINTAANMU: AI ENRICHMENT ---
+            const allRefinedAnswers = existingData.submissions.map(s => s.jawabanRefined);
+            const enrichmentPrompt = `
+                Anda adalah AI yang bertugas menggabungkan beberapa jawaban untuk satu soal menjadi satu jawaban terbaik yang paling komprehensif.
+                Soal: "${existingData.soal}"
+                Jawaban Master Saat Ini: "${existingData.jawaban}"
+                Jawaban-jawaban Lain yang Pernah Disubmit (termasuk yang baru):
+                ${allRefinedAnswers.map(a => `- ${a}`).join('\n')}
+                
+                Tugas Anda: Buat satu jawaban 'master' baru yang menggabungkan semua informasi terbaik dari jawaban-jawaban di atas, dan perbaiki 'Jawaban Master Saat Ini' jika perlu.
+                Jawaban harus komprehensif, akurat, dan ringkas.
+                
+                HANYA respons dengan teks jawaban master baru tersebut.
+            `;
+            
+            try {
+                const newMasterAnswer = await callGemini(enrichmentPrompt);
+                existingData.jawaban = newMasterAnswer; // Update jawaban master
+            } catch (enrichErr) {
+                console.error('AI enrichment failed:', enrichErr);
+                // Jika gagal, setidaknya simpan jawaban refined terbaru sebagai master
+                existingData.jawaban = refinedResult.jawaban_refined;
+            }
+            
+            // Simpan kembali data yang sudah di-enrich
+            // 'soexsoex:questions' adalah HASH { "question-id-uuid": "{...data...}" }
+            await kv.hset('soexsoex:questions', { [existingQuestionId]: JSON.stringify(existingData) });
 
-        // --- 4. Logika Kode Unik ---
+        } else {
+            // --- 4b. JIKA BUKAN DUPLIKAT: Buat Soal Baru ---
+            await createNewQuestion(res, ruang, refinedResult.soal_refined, soalIndexKey, submissionData, currentSubmissions);
+        }
+        
+        // --- 5. Logika Kode Unik (Tetap sama) ---
         let uniqueCode = null;
         if (currentSubmissions + 1 >= 3) {
             uniqueCode = uuidv4().substring(0, 8).toUpperCase();
-            
-            // Simpan kode unik ke dalam 'Set' bernama 'DaftarKodeUnik'
-            // Set otomatis menangani duplikat
             await kv.sadd('DaftarKodeUnik', uniqueCode);
         }
 
-        // Kirim respons sukses ke frontend
         res.status(200).json({ 
             validation: 'VALID', 
-            message: 'Soal berhasil divalidasi dan disimpan.',
+            message: 'Soal berhasil divalidasi dan disimpan (atau diperkaya).',
             uniqueCode: uniqueCode 
         });
 
@@ -181,5 +215,25 @@ export default async function handler(req, res) {
         console.error('Server error:', error);
         res.status(500).json({ error: 'Terjadi kesalahan di server.', validation: 'INVALID' });
     }
+}
+
+// Fungsi helper untuk membuat entri soal baru
+async function createNewQuestion(res, ruang, soalRefined, soalIndexKey, submissionData, currentSubmissions) {
+    const questionId = uuidv4();
+    
+    const questionData = {
+        id: questionId,
+        ruang: ruang,
+        soal: soalRefined, // Ini adalah 'master' soal
+        jawaban: submissionData.jawabanRefined, // Jawaban pertama jadi 'master' jawaban
+        submissions: [submissionData], // Log semua submission
+        createdAt: submissionData.timestamp,
+    };
+
+    // Simpan ke indeks
+    await kv.hset('soexsoex:index:soal', { [soalIndexKey]: questionId });
+    
+    // Simpan data utama
+    await kv.hset('soexsoex:questions', { [questionId]: JSON.stringify(questionData) });
 }
 
