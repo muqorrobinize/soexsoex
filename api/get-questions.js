@@ -1,5 +1,6 @@
 // Ini adalah file Vercel Serverless Function
 // Simpan sebagai: /api/get-questions.js
+// PERUBAHAN: Mengambil data dari HASH 'soexsoex:questions', bukan LIST 'DaftarSoal'
 
 import { createClient } from '@vercel/kv';
 
@@ -15,16 +16,22 @@ export default async function handler(req, res) {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
     
-    // Catatan: Di aplikasi production, kamu harus cek header otentikasi
-    // (misalnya, cek apakah 'uniqueCode' yang disimpan di localStorage valid)
-    // Tapi untuk proyek ini, kita anggap jika frontend memanggil, itu valid.
+    // ... (Logika otentikasi bisa ditambahkan di sini) ...
 
     try {
-        // Ambil semua data dari 'List' DaftarSoal
-        // lrange(key, 0, -1) artinya "ambil semua elemen dari list"
-        const questionStrings = await kv.lrange('DaftarSoal', 0, -1);
+        // PERUBAHAN BESAR:
+        // Kita tidak lagi pakai lrange, tapi hgetall untuk mengambil semua field dari Hash
+        const questionDataHash = await kv.hgetall('soexsoex:questions');
 
-        if (!questionStrings || questionStrings.length === 0) {
+        if (!questionDataHash) {
+            return res.status(200).json({ questions: [] });
+        }
+        
+        // hgetall mengembalikan objek: { "uuid-1": "{data1}", "uuid-2": "{data2}" }
+        // Kita hanya butuh valuenya (datanya)
+        const questionStrings = Object.values(questionDataHash);
+
+        if (questionStrings.length === 0) {
             return res.status(200).json({ questions: [] });
         }
         
@@ -32,10 +39,12 @@ export default async function handler(req, res) {
         const questions = questionStrings.map(q => JSON.parse(q));
 
         // Format data untuk frontend (hanya kirim yang perlu)
+        // Logika ini TIDAK PERLU BERUBAH, karena kita masih mengirim
+        // 'soal' (master soal) dan 'jawaban' (master jawaban yang sudah di-enrich)
         const formattedQuestions = questions.map(q => ({
             ruang: q.ruang,
-            soal: q.soal, // Ini adalah soal yang sudah di-refine
-            jawaban: q.jawaban // Ini adalah jawaban yang sudah di-refine
+            soal: q.soal, // Ini adalah soal master (hasil refine)
+            jawaban: q.jawaban // Ini adalah jawaban master (hasil enrich)
         })).filter(q => q.soal && q.jawaban); // Pastikan data valid
 
         // Kirim data sebagai JSON
