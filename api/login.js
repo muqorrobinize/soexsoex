@@ -1,14 +1,9 @@
 // Ini adalah file Vercel Serverless Function
 // Simpan sebagai: /api/login.js
+// PERBAIKAN: Memindahkan inisialisasi KV ke dalam try...catch
+// untuk menangani error koneksi dan mengirim balasan JSON yang valid.
 
 import { createClient } from '@vercel/kv';
-
-// Inisialisasi Vercel KV
-// Variabel ini otomatis didapat dari Vercel saat kamu menghubungkan KV
-const kv = createClient({
-    url: process.env.KV_REST_API_URL,
-    token: process.env.KV_REST_API_TOKEN,
-});
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
@@ -16,6 +11,18 @@ export default async function handler(req, res) {
     }
 
     try {
+        // PERBAIKAN: Pindahkan inisialisasi ke dalam 'try'
+        // Ini akan menangkap error jika environment variables (KV_URL, dll) tidak ada.
+        const kv = createClient({
+            url: process.env.KV_REST_API_URL,
+            token: process.env.KV_REST_API_TOKEN,
+        });
+
+        // Tambahkan pengecekan eksplisit
+        if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
+            throw new Error("Variabel Vercel KV (KV_REST_API_URL, KV_REST_API_TOKEN) belum di-set di Vercel.");
+        }
+
         const { uniqueCode } = req.body;
 
         if (!uniqueCode) {
@@ -31,7 +38,6 @@ export default async function handler(req, res) {
         }
         // --- Akhir Kode Unik Khusus ---
 
-
         // Cek apakah kode unik adalah anggota dari 'Set' DaftarKodeUnik
         // sismember = "is set member?" (apakah anggota set?)
         const isMember = await kv.sismember('DaftarKodeUnik', trimmedCode);
@@ -45,8 +51,14 @@ export default async function handler(req, res) {
         }
 
     } catch (error) {
-        console.error('Login server error:', error);
-        res.status(500).json({ success: false, error: 'Terjadi kesalahan di server.' });
+        console.error('Login server error:', error.message);
+        // SEKARANG, jika KV gagal, error akan ditangkap di sini dan dikirim sebagai JSON
+        res.status(500).json({ 
+            success: false, 
+            error: 'Terjadi kesalahan di server.',
+            // Kita kirim pesan error-nya ke frontend untuk debugging
+            server_message: error.message 
+        });
     }
 }
 
