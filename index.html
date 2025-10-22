@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOEXSOEX - Gokil</title>
+    <!-- Memuat Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Menggunakan font Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Menyembunyikan elemen secara default */
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen">
+    <div class="container mx-auto p-4 sm:p-8 max-w-4xl">
+
+        <!-- Header -->
+        <header class="text-center mb-10">
+            <h1 class="text-4xl sm:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500">
+                SOEXSOEX
+            </h1>
+            <p class="text-gray-400 mt-2 text-lg">Pls 100 co</p>
+        </header>
+
+        <!-- Pesan Status/Error -->
+        <div id="messageBox" class="hidden p-4 rounded-md mb-6 text-center font-medium"></div>
+
+        <!-- Bagian Navigasi/Toggle -->
+        <div class="flex justify-center space-x-4 mb-8">
+            <button id="navLogin" class="py-2 px-5 bg-purple-600 rounded-lg font-semibold shadow-lg hover:bg-purple-700 transition duration-300">Login</button>
+            <button id="navSubmit" class="py-2 px-5 bg-gray-700 rounded-lg font-semibold hover:bg-gray-600 transition duration-300">Input Soal</button>
+            <button id="navDashboard" class="py-2 px-5 bg-gray-700 rounded-lg font-semibold hover:bg-gray-600 transition duration-300">Dashboard</button>
+        </div>
+
+        <!-- 1. Halaman Login -->
+        <section id="loginPage" class="bg-gray-800 p-6 rounded-xl shadow-2xl">
+            <h2 class="text-2xl font-semibold mb-4 text-center">Akses Dashboard</h2>
+            <p class="text-gray-400 mb-6 text-center">Masukkan kode unik kamu untuk melihat dashboard. <br> Belum punya kode? Input 3 soal valid dulu!</p>
+            <div class="flex flex-col sm:flex-row gap-4">
+                <input type="text" id="loginCodeInput" placeholder="Masukkan kode unik..." class="flex-grow p-3 bg-gray-900 border border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500">
+                <button id="loginButton" class="p-3 bg-purple-600 rounded-lg font-semibold shadow-lg hover:bg-purple-700 transition duration-300">
+                    Masuk
+                </button>
+            </div>
+        </section>
+
+        <!-- 2. Halaman Input Soal -->
+        <section id="submitPage" class="hidden bg-gray-800 p-6 rounded-xl shadow-2xl">
+            <h2 class="text-2xl font-semibold mb-2 text-center">Input Soal Baru</h2>
+            <p class="text-gray-400 mb-6 text-center">Kamu sudah input <strong id="submissionCount" class="text-purple-400">0</strong> dari <strong>3</strong> soal yang dibutuhkan untuk dapat kode unik.</p>
+            
+            <form id="submitForm" class_w-full" onsubmit="handleFormSubmit(event)">
+                <div class="mb-4">
+                    <label for="ruang" class="block text-sm font-medium text-gray-300 mb-2">Pilih Ruang (cth: Matematika, Fisika, KSN-K)</label>
+                    <input type="text" id="ruang" name="ruang" required class="w-full p-3 bg-gray-900 border border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500">
+                </div>
+                <div class="mb-4">
+                    <label for="soal" class="block text-sm font-medium text-gray-300 mb-2">Soal</button>
+                    <textarea id="soal" name="soal" rows="4" required class="w-full p-3 bg-gray-900 border border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
+                </div>
+                <div class="mb-6">
+                    <label for="jawaban" class="block text-sm font-medium text-gray-300 mb-2">Jawaban</label>
+                    <textarea id="jawaban" name="jawaban" rows="4" required class="w-full p-3 bg-gray-900 border border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
+                </div>
+                <button type="submit" id="submitButton" class="w-full p-4 bg-purple-600 rounded-lg font-semibold shadow-lg hover:bg-purple-700 transition duration-300 flex items-center justify-center">
+                    <span id="submitButtonText">Submit Soal</span>
+                    <div id="submitSpinner" class="hidden w-5 h-5 border-t-2 border-white border-solid rounded-full animate-spin"></div>
+                </button>
+            </form>
+        </section>
+
+        <!-- 3. Halaman Dashboard -->
+        <section id="dashboardPage" class="hidden bg-gray-800 p-6 rounded-xl shadow-2xl">
+            <h2 class="text-2xl font-semibold mb-6 text-center">Katalog Soal 'soexsoex'</h2>
+            <div class="mb-6">
+                <input type="text" id="filterInput" placeholder="Cari soal atau ruang..." class="w-full p-3 bg-gray-900 border border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500">
+            </div>
+            <!-- Konten Dashboard akan di-load di sini -->
+            <div id="dashboardContent" class="space-y-6">
+                <!-- Contoh Tampilan Soal -->
+                <div class="text-center text-gray-500">
+                    Memuat soal...
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    <script>
+        // --- State Management Sederhana (menggunakan localStorage) ---
+        // Ini adalah cara "tanpa database" untuk mengingat state user di browser mereka.
+        
+        const state = {
+            isLoggedIn: localStorage.getItem('soexsoex_loggedIn') === 'true',
+            uniqueCode: localStorage.getItem('soexsoex_uniqueCode') || null,
+            submissionCount: parseInt(localStorage.getItem('soexsoex_submissionCount') || '0', 10),
+        };
+
+        // --- Elemen DOM ---
+        const pages = {
+            login: document.getElementById('loginPage'),
+            submit: document.getElementById('submitPage'),
+            dashboard: document.getElementById('dashboardPage'),
+        };
+        
+        const navs = {
+            login: document.getElementById('navLogin'),
+            submit: document.getElementById('navSubmit'),
+            dashboard: document.getElementById('navDashboard'),
+        };
+
+        const loginButton = document.getElementById('loginButton');
+        const loginCodeInput = document.getElementById('loginCodeInput');
+        
+        const submitForm = document.getElementById('submitForm');
+        const submitButton = document.getElementById('submitButton');
+        const submitButtonText = document.getElementById('submitButtonText');
+        const submitSpinner = document.getElementById('submitSpinner');
+        
+        const countDisplay = document.getElementById('submissionCount');
+        const dashboardContent = document.getElementById('dashboardContent');
+        const filterInput = document.getElementById('filterInput');
+        const messageBox = document.getElementById('messageBox');
+
+        // --- Navigasi Halaman ---
+        function showPage(pageName) {
+            // Sembunyikan semua halaman
+            Object.values(pages).forEach(page => page.classList.add('hidden'));
+            
+            // Tampilkan halaman yang dipilih
+            if (pages[pageName]) {
+                pages[pageName].classList.remove('hidden');
+            }
+            
+            // Update style navigasi
+            Object.values(navs).forEach(nav => nav.classList.replace('bg-purple-600', 'bg-gray-700'));
+            if (navs[pageName]) {
+                navs[pageName].classList.replace('bg-gray-700', 'bg-purple-600');
+            }
+        }
+
+        // --- Logika Pesan/Notifikasi ---
+        function showMessage(type, text) {
+            messageBox.classList.remove('hidden', 'bg-red-500', 'bg-green-500', 'bg-blue-500');
+            if (type === 'error') {
+                messageBox.classList.add('bg-red-500', 'text-white');
+            } else if (type === 'success') {
+                messageBox.classList.add('bg-green-500', 'text-white');
+            } else {
+                messageBox.classList.add('bg-blue-500', 'text-white');
+            }
+            messageBox.textContent = text;
+            messageBox.classList.remove('hidden');
+            
+            // Sembunyikan setelah 5 detik
+            setTimeout(() => {
+                messageBox.classList.add('hidden');
+            }, 5000);
+        }
+
+        // --- Logika State & Update UI ---
+        function updateUI() {
+            countDisplay.textContent = state.submissionCount;
+            
+            if (state.isLoggedIn) {
+                // Jika sudah login, dashboard adalah default
+                showPage('dashboard');
+                loadDashboard(); // Muat data dashboard
+            } else {
+                // Jika belum login, login adalah default
+                showPage('login');
+            }
+        }
+
+        // --- 1. Logika Input Soal ---
+        async function handleFormSubmit(event) {
+            event.preventDefault();
+            
+            const ruang = document.getElementById('ruang').value;
+            const soal = document.getElementById('soal').value;
+            const jawaban = document.getElementById('jawaban').value;
+
+            // Tampilkan loading
+            submitButton.disabled = true;
+            submitButtonText.classList.add('hidden');
+            submitSpinner.classList.remove('hidden');
+            
+            try {
+                // Kirim data ke Vercel Serverless Function
+                const response = await fetch('/api/submit-question', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ruang, soal, jawaban, currentSubmissions: state.submissionCount })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.error || 'Gagal menghubungi server.');
+                }
+
+                if (result.validation === 'VALID') {
+                    // Update state jika valid
+                    state.submissionCount++;
+                    localStorage.setItem('soexsoex_submissionCount', state.submissionCount);
+                    countDisplay.textContent = state.submissionCount;
+                    
+                    showMessage('success', 'Soal kamu valid dan berhasil disubmit!');
+                    
+                    // Cek apakah sudah 3x dan dapat kode
+                    if (result.uniqueCode) {
+                        state.uniqueCode = result.uniqueCode;
+                        localStorage.setItem('soexsoex_uniqueCode', state.uniqueCode);
+                        
+                        // Tampilkan kode unik ke user
+                        showMessage('success', `SELAMAT! Soal valid. Kode unik kamu adalah: ${result.uniqueCode}. Harap simpan baik-baik!`);
+                        
+                        // Auto login
+                        state.isLoggedIn = true;
+                        localStorage.setItem('soexsoex_loggedIn', 'true');
+                        setTimeout(updateUI, 2000); // Pindah ke dashboard setelah 2 detik
+                    }
+                    
+                    submitForm.reset();
+                    
+                } else {
+                    // Jika AI menganggap tidak valid
+                    showMessage('error', `Validasi AI Gagal: "${result.reason}". Coba perbaiki soal atau jawabanmu.`);
+                }
+                
+            } catch (err) {
+                console.error('Error submitting form:', err);
+                showMessage('error', err.message);
+            } finally {
+                // Sembunyikan loading
+                submitButton.disabled = false;
+                submitButtonText.classList.remove('hidden');
+                submitSpinner.classList.add('hidden');
+            }
+        }
+        
+        // --- 2. Logika Login ---
+        async function handleLogin() {
+            const code = loginCodeInput.value.trim();
+            if (!code) {
+                showMessage('error', 'Kode unik tidak boleh kosong.');
+                return;
+            }
+
+            loginButton.disabled = true;
+            loginButton.textContent = 'Mengecek...';
+
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ uniqueCode: code })
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    // Login berhasil
+                    state.isLoggedIn = true;
+                    state.uniqueCode = code;
+                    localStorage.setItem('soexsoex_loggedIn', 'true');
+                    localStorage.setItem('soexsoex_uniqueCode', code);
+                    
+                    showMessage('success', 'Login berhasil! Memuat dashboard...');
+                    setTimeout(updateUI, 1000); // Pindah ke dashboard
+                    
+                } else {
+                    throw new Error(result.error || 'Kode unik tidak valid.');
+                }
+                
+            } catch (err) {
+                console.error('Login error:', err);
+                showMessage('error', err.message);
+            } finally {
+                loginButton.disabled = false;
+                loginButton.textContent = 'Masuk';
+            }
+        }
+
+        // --- 3. Logika Dashboard ---
+        let allQuestions = []; // Cache untuk data soal
+
+        async function loadDashboard() {
+            if (!state.isLoggedIn) {
+                showMessage('error', 'Kamu harus login dulu.');
+                showPage('login');
+                return;
+            }
+            
+            dashboardContent.innerHTML = '<div class="text-center text-gray-500">Memuat soal...</div>';
+
+            try {
+                const response = await fetch('/api/get-questions');
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Gagal memuat soal.');
+                }
+                
+                allQuestions = data.questions; // Simpan di cache
+                renderDashboard(allQuestions);
+                
+            } catch (err) {
+                console.error('Dashboard error:', err);
+                showMessage('error', err.message);
+                dashboardContent.innerHTML = `<div class="text-center text-red-400">${err.message}</div>`;
+            }
+        }
+        
+        function renderDashboard(questions) {
+            // Kelompokkan soal berdasarkan 'ruang'
+            const groupedByRoom = questions.reduce((acc, q) => {
+                const room = q.ruang || 'Lain-lain';
+                if (!acc[room]) {
+                    acc[room] = [];
+                }
+                acc[room].push(q);
+                return acc;
+            }, {});
+
+            dashboardContent.innerHTML = ''; // Kosongkan dulu
+
+            if (questions.length === 0) {
+                dashboardContent.innerHTML = '<div class="text-center text-gray-500">Belum ada soal yang disubmit.</div>';
+                return;
+            }
+            
+            // Render setiap grup
+            for (const roomName in groupedByRoom) {
+                const roomElement = document.createElement('div');
+                roomElement.className = 'mb-6';
+                
+                // Judul Ruang
+                const title = document.createElement('h3');
+                title.className = 'text-xl font-semibold text-purple-300 mb-3 capitalize';
+                title.textContent = roomName;
+                roomElement.appendChild(title);
+
+                const questionsList = document.createElement('div');
+                questionsList.className = 'space-y-4';
+                
+                // Render setiap soal dalam ruang
+                groupedByRoom[roomName].forEach(q => {
+                    const qElement = document.createElement('details');
+                    qElement.className = 'bg-gray-900 p-4 rounded-lg cursor-pointer transition hover:bg-gray-850';
+                    qElement.dataset.room = roomName.toLowerCase();
+                    qElement.dataset.question = q.soal.toLowerCase();
+                    
+                    // Ini adalah soal (yang terlihat)
+                    const summary = document.createElement('summary');
+                    summary.className = 'font-medium text-gray-200 list-none';
+                    summary.textContent = q.soal; // Kita akan pakai soal yang sudah di-refine
+                    
+                    // Ini adalah jawaban (yang tersembunyi)
+                    const answer = document.createElement('div');
+                    answer.className = 'mt-3 pt-3 border-t border-gray-700 text-gray-400';
+                    answer.textContent = q.jawaban; // Jawaban yang sudah di-refine
+                    
+                    qElement.appendChild(summary);
+                    qElement.appendChild(answer);
+                    questionsList.appendChild(qElement);
+                });
+                
+                roomElement.appendChild(questionsList);
+                dashboardContent.appendChild(roomElement);
+            }
+        }
+
+        // --- Logika Filter Dashboard ---
+        function filterDashboard() {
+            const query = filterInput.value.toLowerCase().trim();
+            const allDetailElements = document.querySelectorAll('#dashboardContent details');
+
+            allDetailElements.forEach(el => {
+                const roomMatch = el.dataset.room.includes(query);
+                const questionMatch = el.dataset.question.includes(query);
+                
+                if (roomMatch || questionMatch) {
+                    el.classList.remove('hidden');
+                } else {
+                    el.classList.add('hidden');
+                }
+            });
+        }
+        
+        // --- Event Listeners ---
+        navLogin.addEventListener('click', () => showPage('login'));
+        navSubmit.addEventListener('click', () => showPage('submit'));
+        navDashboard.addEventListener('click', () => {
+            if (state.isLoggedIn) {
+                showPage('dashboard');
+                loadDashboard();
+            } else {
+                showMessage('info', 'Kamu harus login dengan kode unik untuk akses dashboard.');
+                showPage('login');
+            }
+        });
+
+        loginButton.addEventListener('click', handleLogin);
+        submitForm.addEventListener('submit', handleFormSubmit);
+        filterInput.addEventListener('input', filterDashboard);
+
+        // --- Inisialisasi Aplikasi ---
+        updateUI();
+
+    </script>
+</body>
+</html>
+
