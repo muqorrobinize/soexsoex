@@ -1,15 +1,10 @@
 // Ini adalah file Vercel Serverless Function
 // Simpan sebagai: /api/submit-question.js
-// PERUBAHAN BESAR: Menggunakan struktur Hash + Indeks untuk deteksi duplikat & enrichment.
+// PERBAIKAN: Memindahkan inisialisasi KV ke dalam try...catch
+// untuk menangani error koneksi dan mengirim balasan JSON yang valid.
 
 import { createClient } from '@vercel/kv';
 import { v4 as uuidv4 } from 'uuid';
-
-// Inisialisasi Vercel KV
-const kv = createClient({
-    url: process.env.KV_REST_API_URL,
-    token: process.env.KV_REST_API_TOKEN,
-});
 
 // --- Logika Rotasi API Key (Autoswitch) ---
 const GEMINI_API_KEY_POOL = process.env.GEMINI_API_KEY_POOL || '';
@@ -77,6 +72,17 @@ export default async function handler(req, res) {
     }
 
     try {
+        // PERBAIKAN: Pindahkan inisialisasi KV ke dalam 'try'
+        const kv = createClient({
+            url: process.env.KV_REST_API_URL,
+            token: process.env.KV_REST_API_TOKEN,
+        });
+
+        // Tambahkan pengecekan eksplisit
+        if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
+            throw new Error("Variabel Vercel KV (KV_REST_API_URL, KV_REST_API_TOKEN) belum di-set di Vercel.");
+        }
+
         const { ruang, soal, jawaban, currentSubmissions } = req.body;
 
         if (!ruang || !soal || !jawaban) {
@@ -110,7 +116,6 @@ export default async function handler(req, res) {
         }
 
         // --- 2. AI Refinement (Perbaikan Teks) ---
-        // Kita butuh hasil refine SEKARANG untuk mengecek duplikat
         const refinePrompt = `
             Anda adalah editor teks untuk bank soal.
             Perbaiki pengetikan, ejaan, dan tata bahasa (PUEBI) dari soal dan jawaban berikut.
@@ -141,31 +146,26 @@ export default async function handler(req, res) {
         };
 
         // --- 3. Deteksi Duplikat ---
-        // Buat 'kunci' unik untuk soal. Normalisasi (lowercase, trim) penting.
         const soalIndexKey = refinedResult.soal_refined.toLowerCase().trim();
         
-        // Cek ke 'indeks' apakah soal ini sudah ada
         // 'soexsoex:index:soal' adalah HASH { "teks soal": "question-id-uuid" }
         const existingQuestionId = await kv.hget('soexsoex:index:soal', soalIndexKey);
 
         if (existingQuestionId) {
             // --- 4a. JIKA DUPLIKAT: Enrich (Perkaya) Data ---
             
-            // Ambil data lama
             const existingDataString = await kv.hget('soexsoex:questions', existingQuestionId);
             if (!existingDataString) {
-                // Harusnya tidak terjadi, tapi untuk jaga-jaga (jika indeks ada tapi data tidak)
-                // Kita anggap saja seperti soal baru
                 await kv.hdel('soexsoex:index:soal', soalIndexKey);
-                return createNewQuestion(res, ruang, refinedResult.soal_refined, soalIndexKey, submissionData, currentSubmissions);
+                // PERBAIKAN: Kirim 'kv' ke fungsi helper
+                return createNewQuestion(res, ruang, refinedResult.soal_refined, soalIndexKey, submissionData, currentSubmissions, kv);
             }
             
             const existingData = JSON.parse(existingDataString);
             
-            // Tambahkan submission baru ini ke log
             existingData.submissions.push(submissionData);
             
-            // --- INI PERMINTAANMU: AI ENRICHMENT ---
+            // --- AI ENRICHMENT ---
             const allRefinedAnswers = existingData.submissions.map(s => s.jawabanRefined);
             const enrichmentPrompt = `
                 Anda adalah AI yang bertugas menggabungkan beberapa jawaban untuk satu soal menjadi satu jawaban terbaik yang paling komprehensif.
@@ -182,20 +182,19 @@ export default async function handler(req, res) {
             
             try {
                 const newMasterAnswer = await callGemini(enrichmentPrompt);
-                existingData.jawaban = newMasterAnswer; // Update jawaban master
+                existingData.jawaban = newMasterAnswer; 
             } catch (enrichErr) {
                 console.error('AI enrichment failed:', enrichErr);
-                // Jika gagal, setidaknya simpan jawaban refined terbaru sebagai master
                 existingData.jawaban = refinedResult.jawaban_refined;
             }
             
-            // Simpan kembali data yang sudah di-enrich
             // 'soexsoex:questions' adalah HASH { "question-id-uuid": "{...data...}" }
             await kv.hset('soexsoex:questions', { [existingQuestionId]: JSON.stringify(existingData) });
 
         } else {
             // --- 4b. JIKA BUKAN DUPLIKAT: Buat Soal Baru ---
-            await createNewQuestion(res, ruang, refinedResult.soal_refined, soalIndexKey, submissionData, currentSubmissions);
+            // PERBAIKAN: Kirim 'kv' ke fungsi helper
+            await createNewQuestion(res, ruang, refinedResult.soal_refined, soalIndexKey, submissionData, currentSubmissions, kv);
         }
         
         // --- 5. Logika Kode Unik (Tetap sama) ---
@@ -213,12 +212,18 @@ export default async function handler(req, res) {
 
     } catch (error) {
         console.error('Server error:', error);
-        res.status(500).json({ error: 'Terjadi kesalahan di server.', validation: 'INVALID' });
+        // PERBAIKAN: Tambahkan server_message untuk debugging di frontend
+        res.status(500).json({ 
+            error: 'Terjadi kesalahan di server.', 
+            validation: 'INVALID',
+            server_message: error.message 
+        });
     }
 }
 
 // Fungsi helper untuk membuat entri soal baru
-async function createNewQuestion(res, ruang, soalRefined, soalIndexKey, submissionData, currentSubmissions) {
+// PERBAIKAN: Tambahkan 'kv' sebagai argumen
+async function createNewQuestion(res, ruang, soalRefined, soalIndexKey, submissionData, currentSubmissions, kv) {
     const questionId = uuidv4();
     
     const questionData = {
